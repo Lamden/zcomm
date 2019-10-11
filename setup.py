@@ -8,5 +8,6 @@ setup(
     license='GPL3',
     author='Stuart Farmer',
     author_email='stuart@lamden.io',
-    description='PyZMQ structures and objects to help write microservices.'
+    description='PyZMQ structures and objects to help write microservices.',
+    install_requires=['zmq']
 )
