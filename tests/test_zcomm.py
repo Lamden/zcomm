@@ -1,5 +1,6 @@
 from unittest import TestCase
 from zcomm.services import SubscriptionService, SocketStruct, Protocols
+from zcomm import services
 import zmq.asyncio
 import asyncio
 
@@ -146,3 +147,55 @@ class TestSubscriptionService(TestCase):
         s = SocketStruct.from_string('inproc://blahblahblah')
 
         self.assertEqual(str(s), 'inproc://blahblahblah')
+
+
+class TestAsyncServer(TestCase):
+    def setUp(self):
+        self.ctx = zmq.asyncio.Context()
+
+    def tearDown(self):
+        self.ctx.destroy()
+
+    def test_init(self):
+        services.AsyncInbox(services._socket('tcp://127.0.0.1:10000'), self.ctx)
+
+    def test_addresses_correct(self):
+        m = services.AsyncInbox(services._socket('tcp://127.0.0.1:10000'), self.ctx)
+
+        self.assertEqual(m.address, 'tcp://*:10000')
+
+    def test_sockets_are_initially_none(self):
+        m = services.AsyncInbox(services._socket('tcp://127.0.0.1:10000'), self.ctx)
+
+        self.assertIsNone(m.socket)
+
+    def test_setup_frontend_creates_socket(self):
+        m = services.AsyncInbox(services._socket('tcp://127.0.0.1:10000'), self.ctx)
+        m.setup_socket()
+
+        self.assertEqual(m.socket.type, zmq.ROUTER)
+        self.assertEqual(m.socket.getsockopt(zmq.LINGER), m.linger)
+
+    def test_sending_message_returns_it(self):
+        m = services.AsyncInbox(services._socket('tcp://127.0.0.1:10000'), self.ctx, linger=500, poll_timeout=500)
+
+        async def get(msg):
+            socket = self.ctx.socket(zmq.DEALER)
+            socket.connect('tcp://127.0.0.1:10000')
+
+            await socket.send(msg)
+
+            res = await socket.recv()
+
+            return res
+
+        tasks = asyncio.gather(
+            m.serve(),
+            get(b'howdy'),
+            stop_server(m, 0.2),
+        )
+
+        loop = asyncio.get_event_loop()
+        res = loop.run_until_complete(tasks)
+
+        self.assertEqual(res[1], b'howdy')

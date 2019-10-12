@@ -275,6 +275,26 @@ class AsyncInbox:
         self.running = False
 
 
+class MultiPartAsyncInbox(AsyncInbox):
+    async def serve(self):
+        self.setup_socket()
+
+        self.running = True
+
+        while self.running:
+            try:
+                event = await self.socket.poll(timeout=self.poll_timeout, flags=zmq.POLLIN)
+                if event:
+                    message = await self.socket.recv_multipart()
+                    asyncio.ensure_future(self.handle_msg(message[0], message[1:]))
+
+            except zmq.error.ZMQError:
+                self.socket.close()
+                self.setup_socket()
+
+        self.socket.close()
+
+
 class AsyncOutbox:
     def __init__(self, socket_id: SocketStruct, ctx: zmq.Context, linger=2000, poll_timeout=2000):
         self.ctx = ctx
