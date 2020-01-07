@@ -13,8 +13,8 @@ class SocketEncoder(json.JSONEncoder):
 class Protocols:
     TCP = 0
     INPROC = 1
-    ICP = 2
-    PROTOCOL_STRINGS = ['tcp://', 'inproc://', 'icp://']
+    IPC = 2
+    PROTOCOL_STRINGS = ['tcp://', 'inproc://', 'ipc://']
 
 
 # syntactic sugar yum yum
@@ -46,7 +46,7 @@ class SocketStruct:
                 protocol = Protocols.PROTOCOL_STRINGS.index(protocol_string)
                 str = str.split(protocol_string)[1]
 
-        if protocol != Protocols.INPROC:
+        if protocol not in {Protocols.INPROC, Protocols.IPC}:
             _id, port = str.split(':')
             port = int(port)
 
@@ -68,6 +68,15 @@ class SocketStruct:
         return self.protocol == other.protocol and \
             self.id == other.id and \
             self.port == other.port
+
+
+def resolve_tcp_or_ipc_base(base_string: str, tcp_port, ipc_dir, bind=False):
+    if base_string.startswith('tcp://'):
+        if bind:
+            return SocketStruct.from_string(f'tcp://*:{tcp_port}')
+        return SocketStruct.from_string(f'{base_string}:{tcp_port}')
+    elif base_string.startswith('ipc://'):
+        return SocketStruct.from_string(f'{base_string}/{ipc_dir}')
 
 
 # Pushes current task to the back of the event loop
@@ -125,10 +134,12 @@ class SubscriptionService:
                         msg = await socket.recv()
                         self.received.append((msg, address))
                 except zmq.error.ZMQError as e:
+                    filter = socket.getsockopt(zmq.SUBSCRIBE)
+
                     socket.close()
 
                     socket = self.ctx.socket(zmq.SUB)
-                    socket.setsockopt(zmq.SUBSCRIBE, b'')
+                    socket.setsockopt(zmq.SUBSCRIBE, filter)
                     socket.setsockopt(zmq.LINGER, self.linger)
 
                     socket.connect(str(address))
@@ -220,10 +231,12 @@ async def get(socket_id: SocketStruct, msg: bytes, ctx:zmq.Context, timeout=500,
 
 
 class AsyncInbox:
-    def __init__(self, socket_id: SocketStruct, ctx: zmq.Context, linger=2000, poll_timeout=2000):
-        socket_id.id = '*'
+    def __init__(self, socket_id: SocketStruct, ctx: zmq.Context, wallet=None, linger=2000, poll_timeout=2000):
+        if socket_id.protocol == Protocols.TCP:
+            socket_id.id = '*'
 
         self.address = str(socket_id)
+        self.wallet = wallet
 
         self.ctx = ctx
 
@@ -247,7 +260,7 @@ class AsyncInbox:
                     msg = await self.socket.recv()
                     asyncio.ensure_future(self.handle_msg(_id, msg))
 
-            except zmq.error.ZMQError:
+            except zmq.error.ZMQError as e:
                 self.socket.close()
                 self.setup_socket()
 
@@ -275,36 +288,16 @@ class AsyncInbox:
         self.running = False
 
 
-class MultiPartAsyncInbox(AsyncInbox):
-    async def serve(self):
-        self.setup_socket()
+async def send_out(self, msg, socket_id):
+    socket = self.ctx.socket(zmq.DEALER)
+    socket.connect(str(socket_id))
 
-        self.running = True
-
-        while self.running:
-            try:
-                event = await self.socket.poll(timeout=self.poll_timeout, flags=zmq.POLLIN)
-                if event:
-                    message = await self.socket.recv_multipart()
-                    asyncio.ensure_future(self.handle_msg(message[0], message[1:]))
-
-            except zmq.error.ZMQError:
-                self.socket.close()
-                self.setup_socket()
-
-        self.socket.close()
+    try:
+        socket.send(msg, zmq.NOBLOCK)
+        return True
+    except zmq.ZMQError:
+        return False
 
 
-class AsyncOutbox:
-    def __init__(self, socket_id: SocketStruct, ctx: zmq.Context, linger=2000, poll_timeout=2000):
-        self.ctx = ctx
-        self.address = str(socket_id)
-
-        self.linger = linger
-        self.poll_timeout = poll_timeout
-
-        self.socket = self.ctx.socket(zmq.DEALER)
-        self.socket.setsockopt(zmq.LINGER, self.linger)
-
-    def send(self, _id, msg_type, msg_payload):
-        pass
+async def multicast():
+    pass
