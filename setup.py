@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='zcomm',
-    version='0.0.1',
+    version='0.0.2',
     packages=['zcomm'],
     url='https://github.com/Lamden/zcomm',
     license='GPL3',
